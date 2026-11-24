@@ -1,0 +1,74 @@
+# Microservicio Resume (Generación de resúmenes con IA) — Proyecto aislado
+# Se conecta a la red externa compartida y se registra en Consul para service discovery.
+# El worker consume eventos pdf.validated de Kafka y produce summary.completed / summary.dlq.
+name: microservicio-resume
+
+services:
+  resume:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: microservicio-resume:v0.1.0
+    restart: unless-stopped
+    # Inmutabilidad en runtime: UID/GID fijo, rootfs de solo lectura,
+    # sin capabilities y sin escalada de privilegios.
+    user: "10001:10001"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+    expose:
+      - "8080"
+    environment:
+      - TZ=${TZ:-America/Argentina/Buenos_Aires}
+      - PORT=${PORT:-8080}
+      # Kafka
+      - KAFKA_BROKERS=${KAFKA_BROKERS:-kafka:9092}
+      - KAFKA_TOPIC_VALIDATED=${KAFKA_TOPIC_VALIDATED:-pdf.validated}
+      - KAFKA_TOPIC_COMPLETED=${KAFKA_TOPIC_COMPLETED:-summary.completed}
+      - KAFKA_TOPIC_DLQ=${KAFKA_TOPIC_DLQ:-summary.dlq}
+      - KAFKA_CONSUMER_GROUP=${KAFKA_CONSUMER_GROUP:-resume-worker}
+      - KAFKA_CLIENT_ID=${KAFKA_CLIENT_ID:-microservicio-resume}
+      # IA (OpenAI-compatible)
+      - AI_API_KEY=${AI_API_KEY}
+      - AI_BASE_URL=${AI_BASE_URL:-https://api.openai.com/v1}
+      - AI_MODEL=${AI_MODEL:-gpt-4o-mini}
+      - AI_MAX_TOKENS=${AI_MAX_TOKENS:-500}
+      - AI_TEMPERATURE=${AI_TEMPERATURE:-0.3}
+      - AI_TIMEOUT=${AI_TIMEOUT:-30s}
+      - AI_MAX_RETRIES=${AI_MAX_RETRIES:-3}
+      - AI_BACKOFF_BASE=${AI_BACKOFF_BASE:-1s}
+      # PDF
+      - MAX_PAGES=${MAX_PAGES:-10}
+      # Persistencia vía HTTP al microservicio-db-go
+      - DB_SERVICE_URL=${DB_SERVICE_URL:-http://microservicio-db-go:8080}
+      - DB_SERVICE_TIMEOUT=${DB_SERVICE_TIMEOUT:-10s}
+      - DB_WAIT_TIMEOUT=${DB_WAIT_TIMEOUT:-2m}
+      - DB_WAIT_INTERVAL=${DB_WAIT_INTERVAL:-1s}
+      - DB_API_KEY=${DB_API_KEY:-}
+      # RFC 9457
+      - ERR_BASE_URL=${ERR_BASE_URL:-https://errors.example.com}
+      # Consul registration (via local client agent for Connect sidecar support)
+      - CONSUL_HTTP_ADDR=${CONSUL_HTTP_ADDR:-consul-agent-resume:8500}
+      - CONSUL_HTTP_TOKEN=${CONSUL_HTTP_TOKEN:-}
+    # Healthcheck: Using Consul health checks instead of Docker health check
+    # because distroless base image lacks shell/curl for CMD-SHELL.
+    # Consul registers the service with HTTP health check at /health.
+    networks:
+      - shared-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+networks:
+  shared-network:
+    name: ${SHARED_NETWORK_NAME:-test_network}
+    external: true
