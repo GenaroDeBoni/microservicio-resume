@@ -139,6 +139,27 @@ func (c *Client) GetTextContent(ctx context.Context, documentID string) (string,
 	return strings.TrimSpace(text), nil
 }
 
+// Health verifica la conectividad con microservicio-db-go.
+// Hace una petición a /health/live del servicio de persistencia.
+func (c *Client) Health(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health/live", nil)
+	if err != nil {
+		return fmt.Errorf("crear request Health: %w", err)
+	}
+	c.setAuthHeader(req)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("error de red Health: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("microservicio-db-go health check falló: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // Upsert crea o actualiza el resumen asociado al document_id.
 // Llama a PATCH /api/v1/documents/{id}/summary con body {"summary": "..."}.
 func (c *Client) Upsert(ctx context.Context, documentID string, summary *domain.Summary) error {
