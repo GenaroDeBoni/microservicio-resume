@@ -13,6 +13,7 @@ import (
 
 	"microservicio-resume/application"
 	"microservicio-resume/config"
+	"microservicio-resume/consul"
 	"microservicio-resume/infrastructure/ai"
 	dbclient "microservicio-resume/infrastructure/http"
 	"microservicio-resume/infrastructure/kafka"
@@ -39,13 +40,48 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// ── Consul Registration ──
+	consulAddress := os.Getenv("CONSUL_HTTP_ADDR")
+	if consulAddress == "" {
+		consulAddress = "consul-agent-resume:8500"
+	}
+	consulToken := os.Getenv("CONSUL_HTTP_TOKEN")
+
+	port, err := consul.ParsePort(cfg.Port)
+	if err != nil {
+		slog.Error("puerto inválido para Consul", slog.String("error", err.Error()))
+		// Continue without Consul registration rather than failing
+		port = 8080
+	}
+
+	consulCfg := consul.Config{
+		ServiceName:   "microservicio-resume",
+		ServicePort:   port,
+		HealthPath:    "/health",
+		ConsulAddress: consulAddress,
+		ConsulToken:   consulToken,
+	}
+	registrar, err := consul.NewRegistrar(consulCfg)
+	if err != nil {
+		slog.Warn("no se pudo crear registrador Consul", slog.String("error", err.Error()))
+		registrar = nil // Don't try to deregister later
+	} else {
+		if err := registrar.Register(ctx); err != nil {
+			slog.Warn("no se pudo registrar en Consul", slog.String("error", err.Error()))
+			registrar = nil // Don't try to deregister later
+		} else {
+			// Ensure deregistration on shutdown
+			go registrar.WaitForShutdown()
+		}
+	}
+
 	// ── Dependencias (Inyección explícita) ──
 	summarizer := ai.NewProvider(
 		cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel,
 		cfg.AIMaxTokens, cfg.AITemperature, cfg.AITimeout,
 		cfg.AIMaxRetries, cfg.AIBackoffBase,
 	)
-	dbClient := dbclient.NewClientWithWait(
+	var dbClient *dbclient.Client = dbclient.NewClientWithWait(
 		cfg.DBServiceURL,
 		cfg.DBServiceTimeout,
 		cfg.DBWaitTimeout,
@@ -84,7 +120,7 @@ func run() error {
 	)
 
 	// ── Servidor HTTP interno (healthcheck únicamente, no expuesto por Traefik) ──
-	router := presentation.NewRouter(presentation.Config{ErrBaseURL: cfg.ErrBaseURL})
+	router := presentation.NewRouter(presentation.Config{ErrBaseURL: cfg.ErrBaseURL}, dbClient)
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           router,
@@ -115,6 +151,10 @@ func run() error {
 		return fmt.Errorf("runtime: %w", err)
 	case <-ctx.Done():
 		slog.Info("señal de apagado recibida")
+		// Signal Consul deregistration
+		if registrar != nil {
+			registrar.SignalShutdown()
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -124,3 +164,4 @@ func run() error {
 		slog.Info("apagado completo")
 		return nil
 	}
+}
