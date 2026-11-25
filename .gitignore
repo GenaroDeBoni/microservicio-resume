@@ -1,0 +1,67 @@
+# =============================================================================
+# .gitignore - microservicio-resume (Go + Docker)
+# =============================================================================
+
+# --- Binarios y artefactos de compilación Go ---
+bin/
+out/
+dist/
+build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Dependencias Go (vendor opcional; descomenta si vendoreas dependencias)
+# vendor/
+
+# Go workspace
+go.work.sum
+
+# --- Entorno y secretos ---
+.env
+.env.local
+.env.*.local
+*.env
+! .env.example   # no ignorar el ejemplo
+
+# --- IDEs y editores ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.classpath
+*.project
+.settings/
+
+# --- Pruebas y cobertura ---
+coverage/
+coverage.html
+coverage.out
+*.cover
+
+# --- Docker ---
+.docker/
+docker-compose.override.yml
+
+# --- Temporales y logs ---
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.bak
+
+# --- OS ---
+__MACOSX/
+.eleventy.js
+
+# =============================================================================
+# Fin del .gitignore
+# =============================================================================
